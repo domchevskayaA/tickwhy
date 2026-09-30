@@ -25,7 +25,7 @@ It's a learning tool for past price moves. It does not predict prices or give in
 - [LangSmith tracing](#langsmith-tracing)
 - [Theming](#theming)
 - [Development](#development)
-- [Deploying to Railway](#deploying-to-railway)
+- [Deployment (Vercel + Railway)](#deployment-vercel--railway)
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 
@@ -311,12 +311,6 @@ Restart the backend after changing these. The Claude call is traced with `@trace
 ## Development
 
 ```bash
-# Production-like frontend build (what the Docker image runs)
-cd frontend
-NEXT_PUBLIC_API_URL=http://localhost:8000 npm run build
-cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/
-PORT=3000 node .next/standalone/server.js
-
 # Frontend checks
 cd frontend
 npx tsc --noEmit        # type check
@@ -330,52 +324,60 @@ cd backend
 
 In the Claude desktop app, `.claude/launch.json` defines `frontend` and `backend` launch configs.
 
-## Deploying to Railway
+## Deployment (Vercel + Railway)
 
-The repo deploys to [Railway](https://railway.com) as **two services from the same GitHub repo**: `backend` (FastAPI, `backend/Dockerfile`) and `frontend` (Next.js standalone, `frontend/Dockerfile`). Each folder has a `railway.json` with the build settings, health check and restart policy.
+Production runs as two pieces:
 
-### 1. Create the project and the backend service
-1. Push the repo to GitHub.
-2. On railway.com: **New Project → Deploy from GitHub repo →** pick this repo.
-3. Open the new service and rename it to **`backend`**. Then in **Settings**:
+| Part | Host | Why |
+|---|---|---|
+| Frontend (`frontend/`) | **Vercel** | Built for Next.js; deploys from GitHub with zero config |
+| Backend (`backend/`) | **Railway** (one service) | Always-on container for long streaming requests and the in-memory cache/limits |
+
+Railway only deploys the backend. It's configured by `backend/Dockerfile` and `backend/railway.json` (build, health check, restart policy, and redeploys only when `backend/` changes).
+
+### 1. Backend on Railway
+1. On railway.com: **New Project → Deploy from GitHub repo →** pick this repo.
+2. Open the service (rename it to `backend` if you like). Then in **Settings**:
    - **Source → Root Directory:** `/backend`
    - **Config-as-code → Railway Config File:** `/backend/railway.json` (the config file path doesn't follow the root directory, so set it explicitly)
-   - **Networking → Generate Domain**
-4. **Variables** (use the Raw Editor):
+   - **Networking → Generate Domain** (e.g. `https://tickwhy-backend.up.railway.app`)
+3. **Variables** (Raw Editor):
    ```
    FINNHUB_API_KEY=...
    TWELVEDATA_API_KEY=...
    ANTHROPIC_API_KEY=...
+   CORS_ORIGINS=["https://your-app.vercel.app"]
    LANGSMITH_TRACING=true
    LANGSMITH_API_KEY=...
    LANGSMITH_PROJECT=tickwhy
    LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
-   CORS_ORIGINS=["https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}"]
    ```
-   `${{frontend.RAILWAY_PUBLIC_DOMAIN}}` is a Railway reference variable: it fills in the frontend's domain automatically. Leave out the LangSmith lines if you don't use tracing (and use the US endpoint if your LangSmith account isn't in the EU).
+   `CORS_ORIGINS` must list your Vercel domain exactly (with `https://`, no trailing slash); add custom domains to the list, e.g. `["https://tickwhy.com","https://your-app.vercel.app"]`. Leave out the LangSmith lines if you don't use tracing, and use the US endpoint if your LangSmith account isn't in the EU.
+4. Check `https://<backend-domain>/api/health`: it should show `"finnhub": true, "twelvedata": true`.
 
-### 2. Add the frontend service
-1. In the same project: **Create → GitHub Repo →** the same repo. Rename the service to **`frontend`**.
-2. **Settings:** Root Directory `/frontend`, Railway Config File `/frontend/railway.json`, **Networking → Generate Domain**.
-3. **Variables:**
+### 2. Frontend on Vercel
+1. **Add New → Project →** import this repo.
+2. **Root Directory:** `frontend` (the framework is detected as Next.js).
+3. **Environment Variables:**
    ```
-   NEXT_PUBLIC_API_URL=https://${{backend.RAILWAY_PUBLIC_DOMAIN}}
+   NEXT_PUBLIC_API_URL=https://<backend-domain>
    ```
-   This value is built into the frontend bundle, so the frontend is rebuilt whenever it changes (Railway redeploys automatically after variable changes).
+4. Deploy. `NEXT_PUBLIC_API_URL` is built into the frontend bundle, so **after changing it, redeploy** (Deployments → ⋯ → Redeploy); saving the variable alone doesn't update the live site.
 
 ### 3. Check it
-- `https://<backend-domain>/api/health` should show `"finnhub": true, "twelvedata": true`.
-- Open the frontend domain, then load a stock and an index.
-- If the page says **"Can't reach the backend…"**, check that `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` point at each other's domains (with `https://`, no trailing slash).
+Open the Vercel URL and load a stock and an index. If the page says **"Can't reach the backend…"**, check that `NEXT_PUBLIC_API_URL` (Vercel) and `CORS_ORIGINS` (Railway) point at each other's domains, then redeploy the frontend.
 
-### Custom domain (optional)
-In each service: **Settings → Networking → Custom Domain** (e.g. `tickwhy.com` for the frontend, `api.tickwhy.com` for the backend), then add the CNAME records Railway shows at your domain registrar. If you set the variables with `${{…RAILWAY_PUBLIC_DOMAIN}}`, switch them to the custom domains.
+### Custom domains (optional)
+- Frontend: Vercel → Project → **Settings → Domains** (e.g. `tickwhy.com`).
+- Backend: Railway → service → **Settings → Networking → Custom Domain** (e.g. `api.tickwhy.com`).
+- Add the DNS records each one shows at your domain registrar, then update `CORS_ORIGINS` and `NEXT_PUBLIC_API_URL` (and redeploy the frontend).
 
 ### Production notes
-- **Keep the backend at one replica.** The cache, rate limiters and AI usage limits live in memory (the Docker image runs a single uvicorn worker).
-- **Cost control:** AI analyses are limited per visitor and per day (`ANALYZE_LIMIT_*`) and cached (`ANALYSIS_CACHE_HOURS`). Also set a monthly spend limit in the Claude Console and a usage limit in your Railway workspace settings.
-- **Market-data plans:** the free Finnhub and Twelve Data tiers are shared by all visitors (Twelve Data allows 8 requests/min), and are generally meant for personal use. Check their terms before running a public site; a paid plan may be required. On a paid plan, raise `TWELVEDATA_RATE_PER_MIN` / `FINNHUB_RATE_PER_MIN`.
-- Every push to the default branch redeploys the service whose folder changed (`watchPatterns` in each `railway.json`).
+- **Keep the backend at one replica.** The cache, rate limiters and AI usage limits live in memory (the image runs a single uvicorn worker).
+- **Vercel preview deployments** get their own URLs, which aren't in `CORS_ORIGINS`, so previews can't reach the backend unless you add their URL.
+- **Cost control:** AI analyses are limited per visitor and per day (`ANALYZE_LIMIT_*`) and cached (`ANALYSIS_CACHE_HOURS`). Also set a monthly spend limit in the Claude Console and a usage limit in your Railway workspace.
+- **Plans and terms:** Vercel's free Hobby plan is for non-commercial use. The free Finnhub and Twelve Data tiers are shared by all visitors (Twelve Data allows 8 requests/min) and are generally meant for personal use; check their terms before running a public site. On a paid data plan, raise `TWELVEDATA_RATE_PER_MIN` / `FINNHUB_RATE_PER_MIN`.
+- Pushing to the default branch redeploys the frontend on Vercel and, when `backend/` changed, the backend on Railway.
 
 ## Troubleshooting
 
