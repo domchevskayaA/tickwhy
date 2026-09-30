@@ -23,6 +23,11 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Cost protection for AI analyses (0 disables a limit).
+    analyze_limit_per_hour: int = 5  # per visitor IP
+    analyze_limit_per_day: int = 100  # whole site
+    analysis_cache_hours: float = 12  # repeat analyses of the same symbol/range are free
+
     # Big-move detection
     move_z_threshold: float = 2.0
     max_moves_to_explain: int = 6

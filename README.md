@@ -25,6 +25,7 @@ It's a learning tool for past price moves. It does not predict prices or give in
 - [LangSmith tracing](#langsmith-tracing)
 - [Theming](#theming)
 - [Development](#development)
+- [Deploying to Railway](#deploying-to-railway)
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 
@@ -132,6 +133,9 @@ Keys live only in `backend/.env`, which git ignores. Never commit them. If a key
 | `CLAUDE_EFFORT` | `medium` | `low` / `medium` / `high` / `xhigh` / `max`: higher means more thorough, slower and more expensive |
 | `MOVE_Z_THRESHOLD` | `2.0` | How unusual a day must be to get flagged, as a multiple of the prior 60 days' standard deviation |
 | `MAX_MOVES_TO_EXPLAIN` | `6` | How many of the biggest moves the AI explains per run |
+| `ANALYZE_LIMIT_PER_HOUR` | `5` | Fresh AI analyses allowed per visitor (IP) per hour; `0` = no limit |
+| `ANALYZE_LIMIT_PER_DAY` | `100` | Fresh AI analyses allowed per day across the whole site; `0` = no limit |
+| `ANALYSIS_CACHE_HOURS` | `12` | Completed analyses are reused for this long, so repeat runs are instant and free |
 | `LANGSMITH_TRACING` | `false` | `true` sends traces to LangSmith (needs `LANGSMITH_API_KEY`) |
 | `LANGSMITH_API_KEY` | — | LangSmith key |
 | `LANGSMITH_PROJECT` | `tickwhy` | LangSmith project name |
@@ -307,6 +311,12 @@ Restart the backend after changing these. The Claude call is traced with `@trace
 ## Development
 
 ```bash
+# Production-like frontend build (what the Docker image runs)
+cd frontend
+NEXT_PUBLIC_API_URL=http://localhost:8000 npm run build
+cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/
+PORT=3000 node .next/standalone/server.js
+
 # Frontend checks
 cd frontend
 npx tsc --noEmit        # type check
@@ -320,6 +330,53 @@ cd backend
 
 In the Claude desktop app, `.claude/launch.json` defines `frontend` and `backend` launch configs.
 
+## Deploying to Railway
+
+The repo deploys to [Railway](https://railway.com) as **two services from the same GitHub repo**: `backend` (FastAPI, `backend/Dockerfile`) and `frontend` (Next.js standalone, `frontend/Dockerfile`). Each folder has a `railway.json` with the build settings, health check and restart policy.
+
+### 1. Create the project and the backend service
+1. Push the repo to GitHub.
+2. On railway.com: **New Project → Deploy from GitHub repo →** pick this repo.
+3. Open the new service and rename it to **`backend`**. Then in **Settings**:
+   - **Source → Root Directory:** `/backend`
+   - **Config-as-code → Railway Config File:** `/backend/railway.json` (the config file path doesn't follow the root directory, so set it explicitly)
+   - **Networking → Generate Domain**
+4. **Variables** (use the Raw Editor):
+   ```
+   FINNHUB_API_KEY=...
+   TWELVEDATA_API_KEY=...
+   ANTHROPIC_API_KEY=...
+   LANGSMITH_TRACING=true
+   LANGSMITH_API_KEY=...
+   LANGSMITH_PROJECT=tickwhy
+   LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
+   CORS_ORIGINS=["https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}"]
+   ```
+   `${{frontend.RAILWAY_PUBLIC_DOMAIN}}` is a Railway reference variable: it fills in the frontend's domain automatically. Leave out the LangSmith lines if you don't use tracing (and use the US endpoint if your LangSmith account isn't in the EU).
+
+### 2. Add the frontend service
+1. In the same project: **Create → GitHub Repo →** the same repo. Rename the service to **`frontend`**.
+2. **Settings:** Root Directory `/frontend`, Railway Config File `/frontend/railway.json`, **Networking → Generate Domain**.
+3. **Variables:**
+   ```
+   NEXT_PUBLIC_API_URL=https://${{backend.RAILWAY_PUBLIC_DOMAIN}}
+   ```
+   This value is built into the frontend bundle, so the frontend is rebuilt whenever it changes (Railway redeploys automatically after variable changes).
+
+### 3. Check it
+- `https://<backend-domain>/api/health` should show `"finnhub": true, "twelvedata": true`.
+- Open the frontend domain, then load a stock and an index.
+- If the page says **"Can't reach the backend…"**, check that `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` point at each other's domains (with `https://`, no trailing slash).
+
+### Custom domain (optional)
+In each service: **Settings → Networking → Custom Domain** (e.g. `tickwhy.com` for the frontend, `api.tickwhy.com` for the backend), then add the CNAME records Railway shows at your domain registrar. If you set the variables with `${{…RAILWAY_PUBLIC_DOMAIN}}`, switch them to the custom domains.
+
+### Production notes
+- **Keep the backend at one replica.** The cache, rate limiters and AI usage limits live in memory (the Docker image runs a single uvicorn worker).
+- **Cost control:** AI analyses are limited per visitor and per day (`ANALYZE_LIMIT_*`) and cached (`ANALYSIS_CACHE_HOURS`). Also set a monthly spend limit in the Claude Console and a usage limit in your Railway workspace settings.
+- **Market-data plans:** the free Finnhub and Twelve Data tiers are shared by all visitors (Twelve Data allows 8 requests/min), and are generally meant for personal use. Check their terms before running a public site; a paid plan may be required. On a paid plan, raise `TWELVEDATA_RATE_PER_MIN` / `FINNHUB_RATE_PER_MIN`.
+- Every push to the default branch redeploys the service whose folder changed (`watchPatterns` in each `railway.json`).
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -331,7 +388,7 @@ In the Claude desktop app, `.claude/launch.json` defines `frontend` and `backend
 | "run out of API credits for the current minute" | Your Twelve Data key is also being used elsewhere, or `TWELVEDATA_RATE_PER_MIN` is set too high. The client waits and retries once. |
 | LangSmith logs `403 Forbidden` on `/runs/multipart` | Your account is probably in the EU region: set `LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com`. If you have several workspaces, also set `LANGSMITH_WORKSPACE_ID`. |
 | "Explain with AI" shows an authentication error | Check `ANTHROPIC_API_KEY` in `backend/.env` (or run `ant auth login`) and restart the backend. |
-| Frontend can't reach the backend / CORS error | Check that `NEXT_PUBLIC_API_URL` in `frontend/.env.local` matches the backend, and that the frontend origin is in `CORS_ORIGINS`. |
+| "Can't reach the backend…" / CORS error | Check that `NEXT_PUBLIC_API_URL` in `frontend/.env.local` matches the backend, and that the frontend origin is in `CORS_ORIGINS`. |
 | Changes to `frontend/.env.local` not applied | Restart `npm run dev`. |
 
 ## Limitations

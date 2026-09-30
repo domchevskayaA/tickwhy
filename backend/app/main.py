@@ -7,12 +7,13 @@ from dotenv import load_dotenv
 # Export .env into os.environ so LangSmith and the Anthropic SDK can read it.
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.agent.graph import analyze_moves, graph, select_moves_to_explain
 from app.agent.index_graph import index_graph
+from app import cache, usage
 from app.clients import finnhub, twelvedata
 from app.config import get_settings
 from app.services import indexes, market, moves
@@ -136,10 +137,12 @@ async def news(
 
 
 @app.post("/api/stocks/{symbol}/analyze")
-async def analyze(symbol: str, range: market.RangeKey = "1Y"):
+async def analyze(request: Request, symbol: str, range: market.RangeKey = "1Y"):
     """Run the LangGraph analysis and stream progress as server-sent events."""
     symbol = symbol.upper()
     return _stream_graph(
+        request,
+        f"stock:{symbol}:{range}",
         graph,
         {"symbol": symbol, "range": range},
         {
@@ -246,9 +249,11 @@ async def index_news(
 
 
 @app.post("/api/indexes/{index_id}/analyze")
-async def analyze_index(index_id: str, range: market.RangeKey = "1Y"):
+async def analyze_index(request: Request, index_id: str, range: market.RangeKey = "1Y"):
     index = _index_or_404(index_id)
     return _stream_graph(
+        request,
+        f"index:{index['id']}:{range}",
         index_graph,
         {"index_id": index["id"], "range": range},
         {
@@ -262,18 +267,45 @@ async def analyze_index(index_id: str, range: market.RangeKey = "1Y"):
 # ── streaming ───────────────────────────────────────────────────────────────
 
 
-def _stream_graph(compiled, inputs: dict, config: dict) -> StreamingResponse:
+def _stream_graph(request: Request, key: str, compiled, inputs: dict, config: dict):
+    """Stream a graph run as SSE, serving repeat runs from cache and enforcing usage limits."""
+    cache_key = f"analysis:{key}:{date.today()}"
+    if replay := cache.get(cache_key):
+        async def cached_events():
+            for event, data in replay:
+                yield _sse(event, data)
+
+        return _sse_response(cached_events())
+
+    ip = request.client.host if request.client else "unknown"
+    if reason := usage.try_start_analysis(ip):
+        return JSONResponse(status_code=429, content={"detail": reason})
+
     async def events():
+        recorded: list[tuple[str, dict]] = []
+        failed = False
         try:
             async for update in compiled.astream(inputs, config, stream_mode="updates"):
                 for node, output in update.items():
-                    yield _sse(node, _public(node, output or {}))
+                    data = _public(node, output or {})
+                    recorded.append((node, data))
+                    yield _sse(node, data)
         except Exception as exc:
+            failed = True
             yield _sse("error", {"message": str(exc)})
+        # Cache only complete, successful runs.
+        if not failed and any(e == "summarize" and "summary" in d for e, d in recorded):
+            hours = get_settings().analysis_cache_hours
+            if hours > 0:
+                cache.put(cache_key, hours * 3600, recorded + [("done", {})])
         yield _sse("done", {})
 
+    return _sse_response(events())
+
+
+def _sse_response(body) -> StreamingResponse:
     return StreamingResponse(
-        events(),
+        body,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

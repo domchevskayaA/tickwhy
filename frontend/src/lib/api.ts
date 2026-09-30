@@ -158,8 +158,20 @@ export interface PeriodSummary {
   caveats: string;
 }
 
+/** fetch() that turns network/CORS failures into an actionable message. */
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_URL}${path}`, init);
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw e;
+    throw new Error(
+      `Can't reach the backend at ${API_URL}. Check that it's running and that its CORS_ORIGINS includes ${window.location.origin}.`,
+    );
+  }
+}
+
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, { signal });
+  const res = await request(path, { signal });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new Error(body?.detail ?? `Request failed (${res.status})`);
@@ -205,8 +217,11 @@ export type AnalysisEvent =
 
 /** Runs a LangGraph analysis (e.g. `/api/stocks/NVDA/analyze?range=1Y`) and yields its events. */
 export async function* streamAnalysis(path: string, signal: AbortSignal): AsyncGenerator<AnalysisEvent> {
-  const res = await fetch(`${API_URL}${path}`, { method: "POST", signal });
-  if (!res.ok || !res.body) throw new Error(`Analysis failed (${res.status})`);
+  const res = await request(path, { method: "POST", signal });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `Analysis failed (${res.status})`);
+  }
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
