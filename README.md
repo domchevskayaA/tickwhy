@@ -1,7 +1,5 @@
 # Tickwhy
 
-*Tickwhy*
-
 Tickwhy helps you understand why a stock or a market index moved. Pick a ticker and it:
 
 - flags the **unusual days** on an interactive chart (moves of at least 2× the usual daily swing),
