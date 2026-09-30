@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* `dark:` follows the theme switch (data-theme on <html>), not just the OS setting. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * Design tokens. Components use the semantic names (bg-surface, text-muted,
+ * text-up, bg-accent, …) so both themes come from one set of classes.
+ * Tailwind's emerald-400 is the brand accent; in the light theme a deeper
+ * emerald is used wherever the accent appears as text, so it stays readable.
+ */
+:root {
+  --bg: #f3f4f5;
+  --surface: #ffffff;
+  --surface-2: #eef0f2;
+  --surface-3: #e4e7ea;
+  --border: #e1e4e8;
+  --border-strong: #cdd2d8;
+  --fg: #0f1113;
+  --muted: #545b63;
+  --subtle: #858c94;
+  --accent: var(--color-emerald-400);
+  --accent-fg: #03140d;
+  --accent-text: var(--color-emerald-700);
+  --accent-soft: color-mix(in oklab, var(--color-emerald-400) 16%, transparent);
+  --up: var(--color-emerald-600);
+  --down: #e0354f;
+  --warn: #b26b00;
+  --warn-soft: rgba(245, 158, 11, 0.14);
+  --info: #0b78c2;
+  --violet: #7c4ddb;
+  --glow: transparent;
+  --chart-grid: rgba(15, 17, 19, 0.06);
+  --chart-text: #6b7178;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0c0d0f;
+  --surface: #141619;
+  --surface-2: #1b1e22;
+  --surface-3: #24282d;
+  --border: #25292e;
+  --border-strong: #353a41;
+  --fg: #eceef0;
+  --muted: #9ba1a8;
+  --subtle: #676d75;
+  --accent: var(--color-emerald-400);
+  --accent-fg: #03140d;
+  --accent-text: var(--color-emerald-400);
+  --accent-soft: color-mix(in oklab, var(--color-emerald-400) 11%, transparent);
+  --up: var(--color-emerald-400);
+  --down: #ff4d6d;
+  --warn: #ffc53d;
+  --warn-soft: rgba(255, 197, 61, 0.1);
+  --info: #4cc2ff;
+  --violet: #b18cff;
+  --glow: color-mix(in oklab, var(--color-emerald-400) 40%, transparent);
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --chart-text: #80868d;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-info: var(--info);
+  --color-violet: var(--violet);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Soft emerald glow for primary actions and highlights (invisible in the light theme). */
+.glow {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 24px -4px var(--glow);
+}
+
+.card {
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* Thin, theme-aware scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
