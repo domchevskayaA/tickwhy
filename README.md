@@ -25,7 +25,6 @@ It's a learning tool for past price moves. It does not predict prices or give in
 - [LangSmith tracing](#langsmith-tracing)
 - [Theming](#theming)
 - [Development](#development)
-- [Deployment (Vercel + Railway)](#deployment-vercel--railway)
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 
@@ -323,61 +322,6 @@ cd backend
 ```
 
 In the Claude desktop app, `.claude/launch.json` defines `frontend` and `backend` launch configs.
-
-## Deployment (Vercel + Railway)
-
-Production runs as two pieces:
-
-| Part | Host | Why |
-|---|---|---|
-| Frontend (`frontend/`) | **Vercel** | Built for Next.js; deploys from GitHub with zero config |
-| Backend (`backend/`) | **Railway** (one service) | Always-on container for long streaming requests and the in-memory cache/limits |
-
-Railway only deploys the backend. It's configured by `backend/Dockerfile` and `backend/railway.json` (build, health check, restart policy, and redeploys only when `backend/` changes).
-
-### 1. Backend on Railway
-1. On railway.com: **New Project → Deploy from GitHub repo →** pick this repo.
-2. Open the service (rename it to `backend` if you like). Then in **Settings**:
-   - **Source → Root Directory:** `/backend`
-   - **Config-as-code → Railway Config File:** `/backend/railway.json` (the config file path doesn't follow the root directory, so set it explicitly)
-   - **Networking → Generate Domain** (e.g. `https://tickwhy-backend.up.railway.app`)
-3. **Variables** (Raw Editor):
-   ```
-   FINNHUB_API_KEY=...
-   TWELVEDATA_API_KEY=...
-   ANTHROPIC_API_KEY=...
-   CORS_ORIGINS=["https://your-app.vercel.app"]
-   LANGSMITH_TRACING=true
-   LANGSMITH_API_KEY=...
-   LANGSMITH_PROJECT=tickwhy
-   LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
-   ```
-   `CORS_ORIGINS` must list your Vercel domain exactly (with `https://`, no trailing slash); add custom domains to the list, e.g. `["https://tickwhy.com","https://your-app.vercel.app"]`. Leave out the LangSmith lines if you don't use tracing, and use the US endpoint if your LangSmith account isn't in the EU.
-4. Check `https://<backend-domain>/api/health`: it should show `"finnhub": true, "twelvedata": true`.
-
-### 2. Frontend on Vercel
-1. **Add New → Project →** import this repo.
-2. **Root Directory:** `frontend` (the framework is detected as Next.js).
-3. **Environment Variables:**
-   ```
-   NEXT_PUBLIC_API_URL=https://<backend-domain>
-   ```
-4. Deploy. `NEXT_PUBLIC_API_URL` is built into the frontend bundle, so **after changing it, redeploy** (Deployments → ⋯ → Redeploy); saving the variable alone doesn't update the live site.
-
-### 3. Check it
-Open the Vercel URL and load a stock and an index. If the page says **"Can't reach the backend…"**, check that `NEXT_PUBLIC_API_URL` (Vercel) and `CORS_ORIGINS` (Railway) point at each other's domains, then redeploy the frontend.
-
-### Custom domains (optional)
-- Frontend: Vercel → Project → **Settings → Domains** (e.g. `tickwhy.com`).
-- Backend: Railway → service → **Settings → Networking → Custom Domain** (e.g. `api.tickwhy.com`).
-- Add the DNS records each one shows at your domain registrar, then update `CORS_ORIGINS` and `NEXT_PUBLIC_API_URL` (and redeploy the frontend).
-
-### Production notes
-- **Keep the backend at one replica.** The cache, rate limiters and AI usage limits live in memory (the image runs a single uvicorn worker).
-- **Vercel preview deployments** get their own URLs, which aren't in `CORS_ORIGINS`, so previews can't reach the backend unless you add their URL.
-- **Cost control:** AI analyses are limited per visitor and per day (`ANALYZE_LIMIT_*`) and cached (`ANALYSIS_CACHE_HOURS`). Also set a monthly spend limit in the Claude Console and a usage limit in your Railway workspace.
-- **Plans and terms:** Vercel's free Hobby plan is for non-commercial use. The free Finnhub and Twelve Data tiers are shared by all visitors (Twelve Data allows 8 requests/min) and are generally meant for personal use; check their terms before running a public site. On a paid data plan, raise `TWELVEDATA_RATE_PER_MIN` / `FINNHUB_RATE_PER_MIN`.
-- Pushing to the default branch redeploys the frontend on Vercel and, when `backend/` changed, the backend on Railway.
 
 ## Troubleshooting
 
